@@ -664,7 +664,6 @@ pub fn notification(app: AppHandle, params: NotificationParams) -> Result<(), St
 
 #[tauri::command]
 pub fn get_exe_dir() -> String {
-    // 获取当前可执行文件路径
     let exe_path = env::current_exe().unwrap();
     let exe_dir = exe_path.parent().unwrap();
     exe_dir.to_str().unwrap().to_string()
@@ -674,9 +673,15 @@ pub fn get_exe_dir() -> String {
 pub fn load_man(base_dir: &str) -> Result<String, io::Error> {
     let mut man_path = PathBuf::from(base_dir);
     man_path.push("config");
-    man_path.push("man.json");
+    man_path.push("man");
     match fs::read_to_string(&man_path) {
-        Ok(man_json) => Ok(man_json),
+        Ok(man_base64) => match BASE64_STANDARD.decode(man_base64.trim()) {
+            Ok(decoded_bytes) => match String::from_utf8(decoded_bytes) {
+                Ok(decoded_str) => Ok(decoded_str),
+                Err(e) => Err(io::Error::new(io::ErrorKind::InvalidData, e)),
+            },
+            Err(e) => Err(io::Error::new(io::ErrorKind::InvalidData, e)),
+        },
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(String::new()),
         Err(e) => Err(e),
     }
@@ -688,7 +693,6 @@ pub fn get_www_dir(base_dir: &str) -> Result<String, io::Error> {
     let mut www_dir = PathBuf::from(base_dir);
     www_dir.push("config");
     www_dir.push("www");
-    // 判断文件夹是否存在并是否为空
     if fs::metadata(&www_dir).is_ok() {
         let files = fs::read_dir(&www_dir)?;
         if files.count() > 0 {
