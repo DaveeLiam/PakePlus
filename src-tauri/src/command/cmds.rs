@@ -4,16 +4,22 @@ use base64::prelude::*;
 use futures::StreamExt;
 use reqwest::Client;
 use serde::Serialize;
+use std::env;
+use std::fs;
 use std::fs::File;
+use std::io;
 use std::io::Read;
 use std::io::Write;
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+use tauri::WindowEvent;
 use tauri::{
     path::BaseDirectory, utils::config::WindowConfig, AppHandle, Emitter, LogicalSize, Manager,
 };
 use tauri_plugin_http::reqwest;
+use tauri_plugin_notification::NotificationExt;
 use walkdir::WalkDir;
 use warp::Filter;
 use zip::write::FileOptions;
@@ -31,7 +37,7 @@ pub async fn start_server(
     }
     let path_clone = path.clone();
     let port = find_port().unwrap();
-    println!("port: {}", port);
+    // println!("port: {}", port);
     let server_handle = tokio::spawn(async move {
         let route = warp::fs::dir(path_clone)
             .map(|reply| {
@@ -156,11 +162,16 @@ pub async fn preview_from_config(
     // custom js
     contents += js_content.as_str();
     if !resize {
-        let _window = tauri::WebviewWindowBuilder::from_config(&handle, &config)
+        let pre_window = tauri::WebviewWindowBuilder::from_config(&handle, &config)
             .unwrap()
             .initialization_script(contents.as_str())
             .build()
             .unwrap();
+        pre_window.on_window_event(move |event| {
+            if let WindowEvent::Destroyed = event {
+                handle.emit("stop_server", "0").unwrap();
+            }
+        });
     }
 }
 
@@ -600,7 +611,16 @@ pub async fn download_file(
 ) -> Result<(), String> {
     let client = Client::new();
     let resp = client.get(&url).send().await.map_err(|e| e.to_string())?;
-
+    // if save path is empty
+    let mut save_path = save_path;
+    let file_name = url.split('/').last().unwrap();
+    if save_path.is_empty() {
+        let file_path = app
+            .path()
+            .resolve(file_name, BaseDirectory::Download)
+            .expect("failed to resolve resource");
+        save_path = file_path.to_str().unwrap().to_string();
+    }
     let total_size = resp.content_length();
     let mut stream = resp.bytes_stream();
     let mut file = File::create(&save_path).map_err(|e| e.to_string())?;
@@ -621,4 +641,66 @@ pub async fn download_file(
         .unwrap();
     }
     Ok(())
+}
+
+#[derive(serde::Deserialize)]
+pub struct NotificationParams {
+    title: String,
+    body: String,
+    icon: String,
+}
+
+#[tauri::command]
+pub fn notification(app: AppHandle, params: NotificationParams) -> Result<(), String> {
+    app.notification()
+        .builder()
+        .title(&params.title)
+        .body(&params.body)
+        .icon(&params.icon)
+        .show()
+        .unwrap();
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_exe_dir() -> String {
+    // 获取当前可执行文件路径
+    let exe_path = env::current_exe().unwrap();
+    let exe_dir = exe_path.parent().unwrap();
+    exe_dir.to_str().unwrap().to_string()
+}
+
+// load man.json
+pub fn load_man(base_dir: &str) -> Result<String, io::Error> {
+    let mut man_path = PathBuf::from(base_dir);
+    man_path.push("config");
+    man_path.push("man.json");
+    match fs::read_to_string(&man_path) {
+        Ok(man_json) => Ok(man_json),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(String::new()),
+        Err(e) => Err(e),
+    }
+}
+
+// server config www dir
+#[tauri::command]
+pub fn get_www_dir(base_dir: &str) -> Result<String, io::Error> {
+    let mut www_dir = PathBuf::from(base_dir);
+    www_dir.push("config");
+    www_dir.push("www");
+    // 判断文件夹是否存在并是否为空
+    if fs::metadata(&www_dir).is_ok() {
+        let files = fs::read_dir(&www_dir)?;
+        if files.count() > 0 {
+            let port = find_port().unwrap();
+            let route = warp::fs::dir(www_dir);
+            tokio::spawn(async move {
+                warp::serve(route).run(([127, 0, 0, 1], port)).await;
+            });
+            return Ok(format!("http://127.0.0.1:{}", port));
+        } else {
+            return Ok(String::new());
+        }
+    }
+    Ok(String::new())
 }

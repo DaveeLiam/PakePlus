@@ -1,27 +1,84 @@
-use serde_json::{json, Error};
-use tauri::{utils::config::WindowConfig, App, AppHandle, Manager, WindowEvent};
+use base64::{prelude::BASE64_STANDARD, Engine};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Error, Value};
+use tauri::{utils::config::WindowConfig, App, Url, WebviewUrl, WindowEvent};
 use tauri_plugin_store::StoreExt;
+
+use crate::command::cmds::{get_exe_dir, get_www_dir, load_man};
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Man {
+    pub name: String,
+    pub version: String,
+    pub description: String,
+    pub author: String,
+    pub license: String,
+    pub window: WindowConfig,
+}
+
+pub fn append_param(original_url: &str, value: &str) -> String {
+    let separator = if original_url.contains('?') { "&" } else { "?" };
+    format!("{}{}args={}", original_url, separator, url_encode(value))
+}
+
+pub fn url_encode(input: &str) -> String {
+    input
+        .bytes()
+        .map(|b| match b {
+            b'-' | b'_' | b'.' | b'~' | b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{:02X}", b),
+        })
+        .collect()
+}
 
 // handle something when start app
 pub async fn resolve_setup(app: &mut App) -> Result<(), Error> {
+    let args: Vec<String> = std::env::args().collect();
+    let args_str = args[1..].join("|");
+    let args_base64 = BASE64_STANDARD.encode(args_str.as_bytes());
     let app_handle = app.handle();
     let window_json = r#"
         {
             "title": "PakePlus",
-            "visible": false
+            "visible": false,
+            "url": "index.html"
         }
     "#;
-    let config: WindowConfig = serde_json::from_str(window_json).unwrap();
+    let mut json_value: Value = serde_json::from_str(window_json)?;
+    if !args_base64.is_empty() {
+        if let Some(url) = json_value.get_mut("url") {
+            if let Some(original_url) = url.as_str() {
+                let new_url = append_param(original_url, args_base64.as_str());
+                *url = Value::String(new_url);
+            }
+        }
+    }
+    let mut config: WindowConfig = serde_json::from_value(json_value).unwrap();
+    // load man
+    let startup_dir = get_exe_dir();
+    let man = load_man(&startup_dir);
+    let man_content = man.unwrap();
+    if man_content.len() > 0 {
+        let mut man_config: Man = serde_json::from_str(&man_content).unwrap();
+        println!("man: {:?}", man_config);
+        let www_dir = get_www_dir(&startup_dir);
+        let www_dir_str = www_dir.unwrap();
+        if www_dir_str.len() > 0 {
+            println!("www_dir: {}", www_dir_str);
+            man_config.window.url = WebviewUrl::External(Url::parse(&www_dir_str).unwrap());
+        }
+        config = man_config.window;
+    }
+    // init window
     let window = tauri::WebviewWindowBuilder::from_config(app_handle, &config)
         .unwrap()
         .build()
         .unwrap();
-
     let store = app.store("app_data.json").unwrap();
-
     let window_fullscreen: Option<serde_json::Value> = store.get("window_fullscreen");
     // println!("windows_fullscreen: {:?}", window_fullscreen);
-
     let window_size: Option<serde_json::Value> = store.get("window_size");
     // println!("windows_size: {:?}", window_size);
     let mut width = 960.0;
@@ -106,27 +163,11 @@ pub async fn resolve_setup(app: &mut App) -> Result<(), Error> {
             }
         } else if let WindowEvent::DragDrop(drag_drop) = event {
             println!("drag_drop: {:?}", drag_drop);
+        } else if let WindowEvent::Destroyed = event {
+            println!("window destroyed");
         }
     });
-
     window.show().unwrap();
-
     window.set_focus().unwrap();
-
     Ok(())
-}
-
-pub fn show_window(app: &AppHandle) {
-    let main = app.get_webview_window("main");
-    if let Some(main) = main {
-        main.unminimize().expect("Sorry, can't unminimize window");
-        main.set_focus().expect("Sorry, can't focus window");
-    } else {
-        app.webview_windows()
-            .values()
-            .next()
-            .expect("Sorry, no window found")
-            .set_focus()
-            .expect("Can't Bring Window to Focus");
-    }
 }

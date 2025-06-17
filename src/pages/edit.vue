@@ -418,7 +418,7 @@
                     <el-button @click="centerDialogVisible = false">
                         {{ t('cancel') }}
                     </el-button>
-                    <el-button type="primary" @click="publishWeb">
+                    <el-button type="primary" @click="publishCheck">
                         {{ t('confirm') }}
                     </el-button>
                 </div>
@@ -492,8 +492,9 @@ import {
     readTextFile,
     writeTextFile,
     exists,
+    remove,
 } from '@tauri-apps/plugin-fs'
-import { appDataDir, join } from '@tauri-apps/api/path'
+import { appCacheDir, appDataDir, join } from '@tauri-apps/api/path'
 import { basename } from '@tauri-apps/api/path'
 import {
     ArrowLeft,
@@ -541,6 +542,7 @@ import { arch, platform } from '@tauri-apps/plugin-os'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import TauriConfig from '@/components/TauriConfig.vue'
 import ImgPreview from '@/components/ImgPreview.vue'
+import { listen } from '@tauri-apps/api/event'
 
 const route = useRoute()
 const router = useRouter()
@@ -903,7 +905,6 @@ const fileToBase64 = (file: any) => {
 
 // loadHtml
 const loadHtml = async () => {
-    console.log('loadHtml')
     store.currentProject.isHtml = true
     const selected = await openSelect(true, [])
     console.log('selected', selected)
@@ -978,9 +979,9 @@ const activeDistInput = async () => {
     if (isTauri) {
         try {
             const res = await invoke('stop_server')
-            console.log('stopServer', res)
+            console.log('activeDistInput stopServer', res)
         } catch (error) {
-            console.error('Failed to stop server:', error)
+            console.error('activeDistInput Failed to stop server:', error)
         }
         loadHtml()
     } else {
@@ -997,14 +998,22 @@ const activeDistInput = async () => {
 const stopServer = async () => {
     if (isTauri) {
         try {
+            const cacheDir = await appCacheDir()
+            const cacheExist = await exists(cacheDir)
+            cacheExist && (await remove(cacheDir, { recursive: true }))
+        } catch (error) {
+            console.error('Failed to remove cache:', error)
+        }
+        try {
             const res = await invoke('stop_server')
-            console.log('stopServer', res)
+            console.log('stop server', res)
         } catch (error) {
             console.error('Failed to stop server:', error)
         }
-        store.actionSecond()
     }
 }
+// close preview window and stop server
+listen('stop_server', stopServer)
 
 // handle file change
 const handleFileChange = async (event: any) => {
@@ -1551,15 +1560,18 @@ const updateTauriConfig = async () => {
     }
 }
 
+// local publish
+const localPublish = async () => {
+    // select save path
+    // download zip
+    // unzip
+    // copy to dist
+    // update config
+    // publish web
+}
+
 // new publish version
 const publishWeb = async () => {
-    if (store.token === '') {
-        oneMessage.error(t('configToken'))
-        return
-    } else if (checkLastPublish()) {
-        oneMessage.error(t('limitProject'))
-        return
-    }
     //  else if (store.currentProject.platform.length === 0) {
     //     oneMessage.error(t('selectPlatform'))
     //     return
@@ -1602,6 +1614,21 @@ const publishWeb = async () => {
             'build error',
             'PakePlus'
         )
+    }
+}
+
+// publish check
+const publishCheck = async () => {
+    if (store.currentProject.desktop.buildMethod === 'local') {
+        localPublish()
+    } else if (store.token === '') {
+        oneMessage.error(t('configToken'))
+        return
+    } else if (checkLastPublish()) {
+        oneMessage.error(t('limitProject'))
+        return
+    } else {
+        publishWeb()
     }
 }
 

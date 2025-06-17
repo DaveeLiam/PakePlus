@@ -695,10 +695,36 @@
                         >
                             <el-button @click="downFile">下载文件</el-button>
                         </el-tooltip>
+                        <el-tooltip
+                            content="Get the default window icon."
+                            placement="bottom"
+                        >
+                            <el-button @click="downFile(false)">
+                                默认下载到Download目录
+                            </el-button>
+                        </el-tooltip>
                         <el-progress
                             type="circle"
                             :percentage="downloadProgress"
                         />
+                    </div>
+                </div>
+                <!-- api/notification -->
+                <div v-else-if="menuIndex === '2-12'" class="cardContent">
+                    <h1 class="cardTitle">notification</h1>
+                    <p>
+                        Send native notifications to your user using the
+                        notification plugin.
+                    </p>
+                    <div class="cardBox">
+                        <el-tooltip
+                            content="Get the default window icon."
+                            placement="bottom"
+                        >
+                            <el-button @click="sendNotification">
+                                发送消息通知
+                            </el-button>
+                        </el-tooltip>
                     </div>
                 </div>
                 <!-- api/template -->
@@ -1073,31 +1099,43 @@ const selectDownloadFolder = async () => {
     selectedDir = selected || ''
 }
 
+// Send native notifications to your user using the notification plugin.
+const sendNotification = async () => {
+    if (!textarea.value) {
+        oneMessage.error('请输入通知内容')
+        return
+    }
+    invoke('notification', {
+        params: {
+            title: 'PakePlus通知API',
+            body: textarea.value,
+            icon: 'face-smile',
+        },
+    })
+}
+
 // 下载文件
 const downloadProgress = ref(0)
-const downFile = async () => {
-    console.log('downFile')
-    if (!textarea.value || !selectedDir) {
+const downFile = async (selPath: boolean = true) => {
+    downloadProgress.value = 0
+    if (!textarea.value) {
         oneMessage.error('请输入下载地址或选择下载文件夹')
         return
     }
     const url = textarea.value
     const fileName = await basename(url)
     const fileId = fileName.split('.')[0]
-    const savePath = await join(selectedDir, fileName)
-    console.log(
-        'url, fileName, fileId, savePath',
-        url,
-        fileName,
-        fileId,
-        savePath
-    )
-    const download = await invoke('download_file', {
+    let savePath = ''
+    if (selPath) {
+        savePath = await join(selectedDir, fileName)
+    } else {
+        console.log('download dir')
+    }
+    await invoke('download_file', {
         url,
         savePath,
         fileId,
     })
-    console.log('download', download)
 }
 
 listen('download_progress', (event: any) => {
